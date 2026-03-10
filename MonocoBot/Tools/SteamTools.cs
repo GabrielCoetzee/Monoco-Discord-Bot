@@ -99,12 +99,35 @@ public class SteamTools
         }
     }
 
-    [Description("Gets the Steam wishlist for a user. The wishlist must be set to public.")]
+    [Description("Gets the Steam wishlist for a user. Works for public wishlists, and also for private wishlists if the user has registered their API key with RegisterSteamApiKey.")]
     public async Task<string> GetSteamWishlist(
         [Description("The Steam 64-bit ID of the user")] string steamId)
     {
         try
         {
+            // Try authenticated API first if a key is available
+            var apiKey = ResolveApiKey(steamId);
+            if (apiKey is not null)
+            {
+                var authUrl = $"https://api.steampowered.com/IWishlistService/GetWishlist/v1/?key={apiKey}&steamid={steamId}";
+                var authResponse = await _httpClient.GetStringAsync(authUrl);
+                var authDoc = JsonDocument.Parse(authResponse);
+
+                if (authDoc.RootElement.TryGetProperty("response", out var resp) &&
+                    resp.TryGetProperty("items", out var items) &&
+                    items.GetArrayLength() > 0)
+                {
+                    var appIds = items.EnumerateArray()
+                        .Select(i => i.GetProperty("appid").GetUInt32())
+                        .ToList();
+
+                    var names = await ResolveAppNamesAsync(appIds);
+                    names.Sort(StringComparer.OrdinalIgnoreCase);
+                    return $"**Steam Wishlist** ({names.Count} items):\n{string.Join("\n", names.Select(n => $"- {n}"))}";
+                }
+            }
+
+            // Fall back to the public store endpoint
             var url = $"https://store.steampowered.com/wishlist/profiles/{steamId}/wishlistdata/?p=0";
             var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Add("User-Agent", "Mozilla/5.0");
@@ -113,19 +136,19 @@ public class SteamTools
             var json = await response.Content.ReadAsStringAsync();
 
             if (json is "[]" or "" or "null")
-                return "Wishlist is empty or private.";
+                return "Wishlist is empty or private. Ask the user to register their Steam API key with RegisterSteamApiKey.";
 
             var doc = JsonDocument.Parse(json);
-            var items = new List<string>();
+            var wishlistItems = new List<string>();
 
             foreach (var item in doc.RootElement.EnumerateObject())
             {
                 if (item.Value.TryGetProperty("name", out var name))
-                    items.Add($"- {name.GetString()}");
+                    wishlistItems.Add($"- {name.GetString()}");
             }
 
-            items.Sort(StringComparer.OrdinalIgnoreCase);
-            return $"**Steam Wishlist** ({items.Count} items):\n{string.Join("\n", items)}";
+            wishlistItems.Sort(StringComparer.OrdinalIgnoreCase);
+            return $"**Steam Wishlist** ({wishlistItems.Count} items):\n{string.Join("\n", wishlistItems)}";
         }
         catch (Exception ex)
         {
@@ -356,6 +379,39 @@ public class SteamTools
         }
 
         return summaries;
+    }
+
+    private async Task<List<string>> ResolveAppNamesAsync(List<uint> appIds)
+    {
+        var names = new List<string>();
+        foreach (var appId in appIds)
+        {
+            try
+            {
+                var url = $"https://store.steampowered.com/api/appdetails?appids={appId}";
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.Add("User-Agent", "Mozilla/5.0");
+                var response = await _httpClient.SendAsync(request);
+                var json = await response.Content.ReadAsStringAsync();
+                var doc = JsonDocument.Parse(json);
+
+                if (doc.RootElement.TryGetProperty(appId.ToString(), out var appData) &&
+                    appData.TryGetProperty("data", out var data) &&
+                    data.TryGetProperty("name", out var name))
+                {
+                    names.Add(name.GetString() ?? $"App {appId}");
+                }
+                else
+                {
+                    names.Add($"App {appId}");
+                }
+            }
+            catch
+            {
+                names.Add($"App {appId}");
+            }
+        }
+        return names;
     }
 
     private sealed class PlayerSummary
