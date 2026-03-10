@@ -15,6 +15,7 @@ public class DateTimeTools
 
             var tz = TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
             var time = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz);
+
             return $"Current time in {tz.DisplayName}: {time:dddd, yyyy-MM-dd HH:mm:ss}";
         }
         catch (TimeZoneNotFoundException)

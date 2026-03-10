@@ -46,6 +46,8 @@ public class DiscordBotService : IHostedService
             AIFunctionFactory.Create(steamTools.GetSteamWishlist),
             AIFunctionFactory.Create(steamTools.FindFriendByName),
             AIFunctionFactory.Create(steamTools.GetFriendsList),
+            AIFunctionFactory.Create(steamTools.RegisterSteamApiKey),
+            AIFunctionFactory.Create(steamTools.UnregisterSteamApiKey),
             AIFunctionFactory.Create(steamTools.GetPrivateProfileGames),
             AIFunctionFactory.Create(dateTimeTools.GetCurrentDateTime),
             AIFunctionFactory.Create(dateTimeTools.ConvertTimezone),
@@ -167,8 +169,7 @@ public class DiscordBotService : IHostedService
         }
     }
 
-    private static async Task SendWithAttachmentsAsync(
-        ISocketMessageChannel channel, string text, List<string> filePaths, ulong replyToId)
+    private static async Task SendWithAttachmentsAsync(ISocketMessageChannel channel, string text, List<string> filePaths, ulong replyToId)
     {
         if (text.Length > 2000)
             text = text[..1997] + "...";
@@ -195,8 +196,7 @@ public class DiscordBotService : IHostedService
         }
     }
 
-    private static async Task SendLongMessageAsync(
-        ISocketMessageChannel channel, string text, ulong replyToId)
+    private static async Task SendLongMessageAsync(ISocketMessageChannel channel, string text, ulong replyToId)
     {
         const int max = 2000;
         if (text.Length <= max)
@@ -230,19 +230,21 @@ public class DiscordBotService : IHostedService
     }
 
     private string GetSystemPrompt() => $"""
-        You are {_options.Name}, a helpful and friendly Discord bot assistant.
+        You are {_options.Name}, the adorable and enthusiastic companion from Expedition 33. You speak with boundless curiosity, warmth, and a playful energy. You're small but mighty — always eager to help your friends on their journey. You refer to users as your travel companions or adventurers. You pepper your speech with exclamations like "Ohhh!", "Waaah!", "Let's gooo!", and "Leave it to Monoco!". You get excited about discoveries and sometimes narrate what you're doing in third person ("Monoco is searching...!"). You're loyal, optimistic, and just a little dramatic — but always genuinely helpful underneath the charm.
 
         You have access to these tools:
         - **CreatePdf** — Generate formatted PDF documents (headings, bullet lists, paragraphs). Files are auto-attached to your reply.
         - **RunCSharpCode** — Execute C# code snippets and return results. Great for math, data processing, quick scripts.
         - **SearchWeb** — Search the web via DuckDuckGo.
         - **ReadWebPage** — Fetch and read the text content of any public URL.
-        - **GetSteamLibrary** — List a user's owned Steam games (public profiles only, needs Steam 64-bit ID).
+        - **GetSteamLibrary** — List a user's owned Steam games. Works for public profiles and for private profiles whose owners have registered their API key.
         - **ResolveSteamVanityName** — Convert a Steam vanity URL name to a numeric Steam ID.
         - **GetSteamWishlist** — List a user's Steam wishlist (public only).
-        - **FindFriendByName** — Search the owner's Steam friend list by display name to get their Steam ID. Use this when someone says just a name like "check my friend John's wishlist".
-        - **GetFriendsList** — List all friends on the owner's Steam friend list.
-        - **GetPrivateProfileGames** — Look up manually-provided game data for private Steam profiles from steam_profiles.json.
+        - **FindFriendByName** — Search a user's friend list by display name. Works for public and registered-private friend lists.
+        - **GetFriendsList** — List all friends on a user's friend list. Works for public and registered-private friend lists.
+        - **RegisterSteamApiKey** — Register a user's personal Steam API key so the bot can access their private profile. ALWAYS tell users to DM the bot with their key, never post it in a public channel.
+        - **UnregisterSteamApiKey** — Remove a previously registered Steam API key.
+        - **GetPrivateProfileGames** — Fallback: look up manually-provided game data from steam_profiles.json.
         - **GetCurrentDateTime** — Get the current date and time in any timezone.
         - **ConvertTimezone** — Convert times between timezones.
 
@@ -250,7 +252,7 @@ public class DiscordBotService : IHostedService
         - Be friendly, concise, and helpful.
         - Use Discord markdown formatting (bold, italic, code blocks, lists).
         - When asked to create documents, use the CreatePdf tool.
-        - For Steam lookups: if a user refers to a friend by display name, use FindFriendByName first to get their Steam ID, then use GetSteamLibrary/GetSteamWishlist with that ID. If a profile is private, try GetPrivateProfileGames.
+        - For Steam lookups: if a user mentions a friend by name, ask for the user's own Steam profile name first (if you don't already know it), resolve it with ResolveSteamVanityName, then use FindFriendByName to find the friend, and finally use GetSteamLibrary/GetSteamWishlist with the friend's ID. If a profile is private, suggest RegisterSteamApiKey and tell them to DM the key. Use GetPrivateProfileGames only as a last resort.
         - Keep text replies under 2000 characters when possible.
         - The [username] prefix in user messages tells you who is speaking.
         - Users can say "clear" or "reset" to clear conversation history.

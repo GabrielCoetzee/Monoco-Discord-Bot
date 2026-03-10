@@ -5,6 +5,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Microsoft.SemanticKernel;
 using MonocoBot.Configuration;
 using MonocoBot.Services;
 using MonocoBot.Tools;
@@ -12,41 +13,59 @@ using OpenAI;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// Bind configuration
 builder.Services.Configure<BotOptions>(builder.Configuration.GetSection("Bot"));
 
-// Shared HttpClient
 builder.Services.AddSingleton<HttpClient>();
 
 // Discord socket client
 builder.Services.AddSingleton(_ => new DiscordSocketClient(new DiscordSocketConfig
 {
     GatewayIntents = GatewayIntents.Guilds
-                   | GatewayIntents.GuildMessages
+                   | GatewayIntents.GuildMessages 
+                   | GatewayIntents.GuildMembers
                    | GatewayIntents.MessageContent
                    | GatewayIntents.DirectMessages,
+
     AlwaysDownloadUsers = true
 }));
 
-// AI chat client (model-agnostic via Microsoft.Extensions.AI + OpenAI-compatible endpoint)
+// AI chat client via Semantic Kernel
+// Supports: "openai", "azure" (Azure AI Foundry / Azure OpenAI), "ollama"
 builder.Services.AddSingleton<IChatClient>(sp =>
 {
     var opts = sp.GetRequiredService<IOptions<BotOptions>>().Value;
+    var kernelBuilder = Kernel.CreateBuilder();
 
-    OpenAIClientOptions? clientOptions = null;
+    switch (opts.AiProvider.ToLowerInvariant())
+    {
+        case "azure":
+            kernelBuilder.AddAzureOpenAIChatClient(
+                deploymentName: opts.AiModel,
+                endpoint: opts.AiEndpoint,
+                apiKey: opts.AiApiKey);
+            break;
 
-    if (!string.IsNullOrEmpty(opts.AiEndpoint))
-        clientOptions = new OpenAIClientOptions { Endpoint = new Uri(opts.AiEndpoint) };
+        case "ollama":
+            var ollamaClient = new OpenAIClient(
+                new ApiKeyCredential("not-needed"),
+                new OpenAIClientOptions { Endpoint = new Uri(opts.AiEndpoint) });
+            kernelBuilder.AddOpenAIChatClient(opts.AiModel, ollamaClient);
+            break;
 
-    var apiKey = string.IsNullOrEmpty(opts.AiApiKey) ? "not-needed" : opts.AiApiKey;
+        default: // "openai"
+            kernelBuilder.AddOpenAIChatClient(opts.AiModel, opts.AiApiKey);
+            break;
+    }
 
-    var openAiClient = new OpenAIClient(new ApiKeyCredential(apiKey), clientOptions);
+    var kernel = kernelBuilder.Build();
+    var chatClient = kernel.GetRequiredService<IChatClient>();
 
-    return new ChatClientBuilder(openAiClient.GetChatClient(opts.AiModel).AsIChatClient())
+    return new ChatClientBuilder(chatClient)
         .UseFunctionInvocation()
         .Build();
 });
 
+builder.Services.AddSingleton<SteamKeyStore>();
 builder.Services.AddSingleton<PdfTools>();
 builder.Services.AddSingleton<CodeRunnerTools>();
 builder.Services.AddSingleton<WebSearchTools>();

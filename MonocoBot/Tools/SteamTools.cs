@@ -9,30 +9,45 @@ public class SteamTools
 {
     private readonly HttpClient _httpClient;
     private readonly BotOptions _options;
+    private readonly SteamKeyStore _keyStore;
 
-    public SteamTools(HttpClient httpClient, IOptions<BotOptions> options)
+    public SteamTools(HttpClient httpClient, IOptions<BotOptions> options, SteamKeyStore keyStore)
     {
         _httpClient = httpClient;
         _options = options.Value;
+        _keyStore = keyStore;
+    }
+
+    private string? ResolveApiKey(string? steamId = null)
+    {
+        if (!string.IsNullOrEmpty(steamId))
+        {
+            var personalKey = _keyStore.GetApiKey(steamId);
+            if (!string.IsNullOrEmpty(personalKey))
+                return personalKey;
+        }
+
+        return string.IsNullOrEmpty(_options.SteamApiKey) ? null : _options.SteamApiKey;
     }
 
     [Description("Gets the list of owned games for a Steam user by their Steam 64-bit ID. " +
-        "The profile must be public. Use ResolveSteamVanityName first if you have a vanity URL instead of a numeric ID.")]
+        "Works for public profiles, and also for private profiles if the user has registered their API key with RegisterSteamApiKey.")]
     public async Task<string> GetSteamLibrary(
         [Description("The Steam 64-bit ID (e.g., '76561198012345678')")] string steamId)
     {
         try
         {
-            if (string.IsNullOrEmpty(_options.SteamApiKey))
-                return "Error: Steam API key is not configured. Set 'Bot:SteamApiKey' in appsettings.json.";
+            var apiKey = ResolveApiKey(steamId);
+            if (apiKey is null)
+                return "Error: No Steam API key available. Either set 'Bot:SteamApiKey' in config or ask the user to register their key with RegisterSteamApiKey.";
 
-            var url = $"http://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key={_options.SteamApiKey}&steamid={steamId}&include_appinfo=1&format=json";
+            var url = $"http://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key={apiKey}&steamid={steamId}&include_appinfo=1&format=json";
             var response = await _httpClient.GetStringAsync(url);
             var doc = JsonDocument.Parse(response);
 
             var resp = doc.RootElement.GetProperty("response");
             if (!resp.TryGetProperty("games", out var games))
-                return "No games found. The profile may be private. Try GetPrivateProfileGames instead.";
+                return "No games found. The profile may be private — ask the user to register their Steam API key with RegisterSteamApiKey.";
 
             var gameList = new List<(string Name, double Hours)>();
             foreach (var game in games.EnumerateArray())
@@ -61,10 +76,11 @@ public class SteamTools
     {
         try
         {
-            if (string.IsNullOrEmpty(_options.SteamApiKey))
+            var apiKey = ResolveApiKey();
+            if (apiKey is null)
                 return "Error: Steam API key is not configured.";
 
-            var url = $"http://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/?key={_options.SteamApiKey}&vanityurl={vanityName}";
+            var url = $"http://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/?key={apiKey}&vanityurl={vanityName}";
             var response = await _httpClient.GetStringAsync(url);
             var doc = JsonDocument.Parse(response);
 
@@ -117,25 +133,25 @@ public class SteamTools
         }
     }
 
-    [Description("Searches the bot owner's Steam friend list by display name and returns matching friends with their Steam IDs. " +
-        "Use this when a user provides just a friend's name. The returned Steam ID can then be passed to GetSteamLibrary, GetSteamWishlist, etc.")]
+    [Description("Searches a Steam user's friend list by display name and returns matching friends with their Steam IDs. " +
+        "Works for public friend lists, and also for private ones if the user has registered their API key.")]
     public async Task<string> FindFriendByName(
+        [Description("The Steam 64-bit ID of the user whose friend list to search")] string steamId,
         [Description("The display name (or part of it) to search for in the friend list")] string friendName)
     {
         try
         {
-            if (string.IsNullOrEmpty(_options.SteamApiKey))
-                return "Error: Steam API key is not configured.";
+            var apiKey = ResolveApiKey(steamId);
 
-            if (string.IsNullOrEmpty(_options.OwnerSteamId))
-                return "Error: OwnerSteamId is not configured. Set 'Bot:OwnerSteamId' in appsettings.json.";
+            if (apiKey is null)
+                return "Error: No Steam API key available.";
 
-            var friends = await GetFriendSteamIds(_options.OwnerSteamId);
+            var friends = await GetFriendSteamIds(steamId, apiKey);
 
             if (friends.Count == 0)
-                return "Friend list is empty or private.";
+                return "Friend list is empty or the profile's friend list is private.";
 
-            var summaries = await GetPlayerSummaries(friends);
+            var summaries = await GetPlayerSummaries(friends, apiKey);
 
             var matches = summaries
                 .Where(s => s.Name.Contains(friendName, StringComparison.OrdinalIgnoreCase))
@@ -155,21 +171,23 @@ public class SteamTools
         }
     }
 
-    [Description("Lists all friends on the bot owner's Steam friend list with their display names and Steam IDs.")]
-    public async Task<string> GetFriendsList()
+    [Description("Lists all friends on a Steam user's friend list with their display names and Steam IDs. " +
+        "Works for public friend lists, and also for private ones if the user has registered their API key.")]
+    public async Task<string> GetFriendsList(
+        [Description("The Steam 64-bit ID of the user whose friend list to retrieve")] string steamId)
     {
         try
         {
-            if (string.IsNullOrEmpty(_options.SteamApiKey))
-                return "Error: Steam API key is not configured.";
-            if (string.IsNullOrEmpty(_options.OwnerSteamId))
-                return "Error: OwnerSteamId is not configured. Set 'Bot:OwnerSteamId' in appsettings.json.";
+            var apiKey = ResolveApiKey(steamId);
+            if (apiKey is null)
+                return "Error: No Steam API key available.";
 
-            var friends = await GetFriendSteamIds(_options.OwnerSteamId);
+            var friends = await GetFriendSteamIds(steamId, apiKey);
+
             if (friends.Count == 0)
-                return "Friend list is empty or private.";
+                return "Friend list is empty or the profile's friend list is private.";
 
-            var summaries = await GetPlayerSummaries(friends);
+            var summaries = await GetPlayerSummaries(friends, apiKey);
             summaries.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
 
             var lines = summaries.Select(s => $"- {s.Name}  (`{s.SteamId}`)");
@@ -179,6 +197,69 @@ public class SteamTools
         {
             return $"Failed to get friends list: {ex.Message}";
         }
+    }
+
+    [Description("Registers a user's personal Steam Web API key so the bot can access their profile even if it's set to private. " +
+        "The user can get a free key at https://steamcommunity.com/dev/apikey. " +
+        "IMPORTANT: Always tell the user to send their API key via DM to the bot, never in a public channel.")]
+    public async Task<string> RegisterSteamApiKey(
+        [Description("The user's Steam vanity name or 64-bit ID")] string steamIdOrVanity,
+        [Description("The user's personal Steam Web API key from steamcommunity.com/dev/apikey")] string apiKey)
+    {
+        try
+        {
+            // Resolve to a Steam 64-bit ID if a vanity name was provided
+            var steamId = steamIdOrVanity;
+            if (!steamIdOrVanity.All(char.IsDigit) || steamIdOrVanity.Length < 15)
+            {
+                var resolveUrl = $"http://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/?key={apiKey}&vanityurl={steamIdOrVanity}";
+                var resolveResponse = await _httpClient.GetStringAsync(resolveUrl);
+                var resolveDoc = JsonDocument.Parse(resolveResponse);
+                var resp = resolveDoc.RootElement.GetProperty("response");
+
+                if (resp.GetProperty("success").GetInt32() != 1)
+                    return $"Could not resolve '{steamIdOrVanity}' to a Steam ID. Check the name and make sure the API key is valid.";
+
+                steamId = resp.GetProperty("steamid").GetString()!;
+            }
+
+            // Verify the key works by fetching the player summary
+            var summaryUrl = $"http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key={apiKey}&steamids={steamId}";
+            var summaryResponse = await _httpClient.GetStringAsync(summaryUrl);
+            var summaryDoc = JsonDocument.Parse(summaryResponse);
+
+            var players = summaryDoc.RootElement.GetProperty("response").GetProperty("players");
+            var displayName = "Unknown";
+            foreach (var player in players.EnumerateArray())
+            {
+                if (player.GetProperty("steamid").GetString() == steamId)
+                {
+                    displayName = player.GetProperty("personaname").GetString() ?? "Unknown";
+                    break;
+                }
+            }
+
+            _keyStore.Register(steamId, apiKey, displayName);
+            return $"Successfully registered Steam API key for **{displayName}** (ID: `{steamId}`). " +
+                   $"The bot can now access this profile's games, wishlist, and friend list even if it's private.";
+        }
+        catch (Exception ex)
+        {
+            return $"Failed to register Steam API key: {ex.Message}. Make sure the API key is valid.";
+        }
+    }
+
+    [Description("Removes a previously registered Steam API key so the bot no longer has private access to that profile.")]
+    public string UnregisterSteamApiKey(
+        [Description("The Steam 64-bit ID to unregister")] string steamId)
+    {
+        if (_keyStore.HasKey(steamId))
+        {
+            _keyStore.Unregister(steamId);
+            return $"Removed registered API key for Steam ID `{steamId}`.";
+        }
+
+        return $"No registered API key found for Steam ID `{steamId}`.";
     }
 
     [Description("Gets game and wishlist information for a private Steam profile from the locally configured steam_profiles.json file. " +
@@ -230,9 +311,9 @@ public class SteamTools
         }
     }
 
-    private async Task<List<string>> GetFriendSteamIds(string ownerSteamId)
+    private async Task<List<string>> GetFriendSteamIds(string ownerSteamId, string apiKey)
     {
-        var url = $"http://api.steampowered.com/ISteamUser/GetFriendList/v0001/?key={_options.SteamApiKey}&steamid={ownerSteamId}&relationship=friend";
+        var url = $"http://api.steampowered.com/ISteamUser/GetFriendList/v0001/?key={apiKey}&steamid={ownerSteamId}&relationship=friend";
         var response = await _httpClient.GetStringAsync(url);
         var doc = JsonDocument.Parse(response);
 
@@ -247,7 +328,7 @@ public class SteamTools
         return ids;
     }
 
-    private async Task<List<PlayerSummary>> GetPlayerSummaries(List<string> steamIds)
+    private async Task<List<PlayerSummary>> GetPlayerSummaries(List<string> steamIds, string apiKey)
     {
         var summaries = new List<PlayerSummary>();
 
@@ -255,7 +336,7 @@ public class SteamTools
         foreach (var batch in steamIds.Chunk(100))
         {
             var ids = string.Join(",", batch);
-            var url = $"http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key={_options.SteamApiKey}&steamids={ids}";
+            var url = $"http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key={apiKey}&steamids={ids}";
             var response = await _httpClient.GetStringAsync(url);
             var doc = JsonDocument.Parse(response);
 
