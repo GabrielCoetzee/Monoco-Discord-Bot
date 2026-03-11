@@ -137,7 +137,12 @@ public class DiscordBotService : IHostedService
 
             ToolOutput.Reset();
 
-            var chatOptions = new ChatOptions { Tools = _tools };
+            var chatOptions = new ChatOptions
+            {
+                Tools = _tools,
+                Temperature = _options.AiTemperature
+            };
+
             var response = await _chatClient.GetResponseAsync(history, chatOptions);
             var responseText = response.Text ?? "I couldn't generate a response.";
 
