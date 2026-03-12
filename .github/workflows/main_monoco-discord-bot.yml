@@ -21,7 +21,7 @@ jobs:
       - name: Set up .NET Core
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.200'
+          dotnet-version: '10.x'
 
       - name: Build with dotnet
         run: dotnet build --configuration Release
@@ -51,9 +51,9 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_CE9C303B7109486D9367C348AF9BA576 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_446CBC74CBB5462DBADE15EAF0C4F5F3 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_501B01AC41E64F86A5C48DB25ABB860B }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_915D63806C144890A8888FFF43887D7E }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_8A4F8AE618964912A94013CC0703238F }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_E8300F4B45404B208A82AB0456CEFD01 }}
 
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
@@ -62,7 +62,4 @@ jobs:
           app-name: 'Monoco-discord-bot'
           slot-name: 'Production'
           package: .
-
           
-
-
